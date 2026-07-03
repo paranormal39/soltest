@@ -119,10 +119,16 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function recordDividend() external payable override {
     require(msg.value > 0, "Token: no ETH supplied");
+    // Cache storage reads into memory once to avoid repeated SLOADs in the loop.
+    address[] memory _holders = holders;
+    uint256 len = _holders.length;
+    uint256 value = msg.value;
     uint256 supply = totalSupply;
-    for (uint256 i = 0; i < holders.length; i += 1) {
-      address holder = holders[i];
-      uint256 share = msg.value.mul(balanceOf[holder]).div(supply);
+    // Note: Solidity 0.7.0 does not perform overflow checks on arithmetic,
+    // so `++i` here is already gas-cheap (no `unchecked` block needed).
+    for (uint256 i = 0; i < len; ++i) {
+      address holder = _holders[i];
+      uint256 share = value.mul(balanceOf[holder]).div(supply);
       accruedDividend[holder] = accruedDividend[holder].add(share);
     }
   }
