@@ -51,8 +51,9 @@ contract Token is IERC20, IMintableToken, IDividends {
     }
   }
 
-  function _updateHolder(address addr) internal {
-    if (balanceOf[addr] > 0) {
+  // Caller passes the already-computed balance to avoid re-reading balanceOf.
+  function _updateHolder(address addr, uint256 balance) internal {
+    if (balance > 0) {
       _addHolder(addr);
     } else {
       _removeHolder(addr);
@@ -66,10 +67,12 @@ contract Token is IERC20, IMintableToken, IDividends {
   }
 
   function transfer(address to, uint256 value) external override returns (bool) {
-    balanceOf[msg.sender] = balanceOf[msg.sender].sub(value);
-    balanceOf[to] = balanceOf[to].add(value);
-    _updateHolder(msg.sender);
-    _updateHolder(to);
+    uint256 fromBal = balanceOf[msg.sender].sub(value);
+    balanceOf[msg.sender] = fromBal;
+    uint256 toBal = balanceOf[to].add(value);
+    balanceOf[to] = toBal;
+    _updateHolder(msg.sender, fromBal);
+    _updateHolder(to, toBal);
     return true;
   }
 
@@ -80,10 +83,12 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function transferFrom(address from, address to, uint256 value) external override returns (bool) {
     allowances[from][msg.sender] = allowances[from][msg.sender].sub(value);
-    balanceOf[from] = balanceOf[from].sub(value);
-    balanceOf[to] = balanceOf[to].add(value);
-    _updateHolder(from);
-    _updateHolder(to);
+    uint256 fromBal = balanceOf[from].sub(value);
+    balanceOf[from] = fromBal;
+    uint256 toBal = balanceOf[to].add(value);
+    balanceOf[to] = toBal;
+    _updateHolder(from, fromBal);
+    _updateHolder(to, toBal);
     return true;
   }
 
@@ -91,16 +96,17 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function mint() external payable override {
     require(msg.value > 0, "Token: no ETH supplied");
-    balanceOf[msg.sender] = balanceOf[msg.sender].add(msg.value);
+    uint256 newBal = balanceOf[msg.sender].add(msg.value);
+    balanceOf[msg.sender] = newBal;
     totalSupply = totalSupply.add(msg.value);
-    _updateHolder(msg.sender);
+    _updateHolder(msg.sender, newBal);
   }
 
   function burn(address payable dest) external override {
     uint256 bal = balanceOf[msg.sender];
     balanceOf[msg.sender] = 0;
     totalSupply = totalSupply.sub(bal);
-    _updateHolder(msg.sender);
+    _updateHolder(msg.sender, 0);
     dest.transfer(bal);
   }
 
@@ -119,17 +125,16 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function recordDividend() external payable override {
     require(msg.value > 0, "Token: no ETH supplied");
-    // Cache storage reads into memory once to avoid repeated SLOADs in the loop.
-    address[] memory _holders = holders;
-    uint256 len = _holders.length;
+    // Cache hot values in locals: `msg.value`, `totalSupply`, and the array
+    // length (read once instead of on every loop iteration). We index the
+    // storage array directly to avoid the MSTORE/MLOAD cost of a memory copy.
     uint256 value = msg.value;
     uint256 supply = totalSupply;
-    // Note: Solidity 0.7.0 does not perform overflow checks on arithmetic,
-    // so `++i` here is already gas-cheap (no `unchecked` block needed).
+    uint256 len = holders.length;
+    // Solidity 0.7.0 has no built-in overflow checks, so `++i` is already cheap.
     for (uint256 i = 0; i < len; ++i) {
-      address holder = _holders[i];
-      uint256 share = value.mul(balanceOf[holder]).div(supply);
-      accruedDividend[holder] = accruedDividend[holder].add(share);
+      address holder = holders[i];
+      accruedDividend[holder] = accruedDividend[holder].add(value.mul(balanceOf[holder]).div(supply));
     }
   }
 
