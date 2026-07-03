@@ -51,15 +51,6 @@ contract Token is IERC20, IMintableToken, IDividends {
     }
   }
 
-  // Caller passes the already-computed balance to avoid re-reading balanceOf.
-  function _updateHolder(address addr, uint256 balance) internal {
-    if (balance > 0) {
-      _addHolder(addr);
-    } else {
-      _removeHolder(addr);
-    }
-  }
-
   // IERC20
 
   function allowance(address owner, address spender) external view override returns (uint256) {
@@ -67,12 +58,14 @@ contract Token is IERC20, IMintableToken, IDividends {
   }
 
   function transfer(address to, uint256 value) external override returns (bool) {
-    uint256 fromBal = balanceOf[msg.sender].sub(value);
-    balanceOf[msg.sender] = fromBal;
-    uint256 toBal = balanceOf[to].add(value);
-    balanceOf[to] = toBal;
-    _updateHolder(msg.sender, fromBal);
-    _updateHolder(to, toBal);
+    uint256 fromPrev = balanceOf[msg.sender];
+    uint256 fromNew = fromPrev.sub(value);
+    balanceOf[msg.sender] = fromNew;
+    uint256 toPrev = balanceOf[to];
+    balanceOf[to] = toPrev.add(value);
+    // Only touch the holder list on an actual zero-crossing.
+    if (fromNew == 0 && fromPrev != 0) _removeHolder(msg.sender);
+    if (toPrev == 0 && value != 0) _addHolder(to);
     return true;
   }
 
@@ -83,12 +76,14 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function transferFrom(address from, address to, uint256 value) external override returns (bool) {
     allowances[from][msg.sender] = allowances[from][msg.sender].sub(value);
-    uint256 fromBal = balanceOf[from].sub(value);
-    balanceOf[from] = fromBal;
-    uint256 toBal = balanceOf[to].add(value);
-    balanceOf[to] = toBal;
-    _updateHolder(from, fromBal);
-    _updateHolder(to, toBal);
+    uint256 fromPrev = balanceOf[from];
+    uint256 fromNew = fromPrev.sub(value);
+    balanceOf[from] = fromNew;
+    uint256 toPrev = balanceOf[to];
+    balanceOf[to] = toPrev.add(value);
+    // Only touch the holder list on an actual zero-crossing.
+    if (fromNew == 0 && fromPrev != 0) _removeHolder(from);
+    if (toPrev == 0 && value != 0) _addHolder(to);
     return true;
   }
 
@@ -96,17 +91,19 @@ contract Token is IERC20, IMintableToken, IDividends {
 
   function mint() external payable override {
     require(msg.value > 0, "Token: no ETH supplied");
-    uint256 newBal = balanceOf[msg.sender].add(msg.value);
-    balanceOf[msg.sender] = newBal;
+    uint256 prev = balanceOf[msg.sender];
+    balanceOf[msg.sender] = prev.add(msg.value);
     totalSupply = totalSupply.add(msg.value);
-    _updateHolder(msg.sender, newBal);
+    // msg.value > 0, so this is a holder only if crossing up from zero.
+    if (prev == 0) _addHolder(msg.sender);
   }
 
   function burn(address payable dest) external override {
     uint256 bal = balanceOf[msg.sender];
     balanceOf[msg.sender] = 0;
     totalSupply = totalSupply.sub(bal);
-    _updateHolder(msg.sender, 0);
+    // Only crossing down to zero requires a holder-list update.
+    if (bal != 0) _removeHolder(msg.sender);
     dest.transfer(bal);
   }
 
